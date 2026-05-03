@@ -1,0 +1,80 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 0. Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Phase 3: Primitive Definition
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid)) ||
+        request.auth.token.email == 'geesinjosephhh@gmail.com' ||
+        request.auth.token.email == 'genzin.official@gmail.com'
+      );
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // 1. Products
+    match /products/{productId} {
+      function isValidProduct(data) {
+        return data.name is string && data.name.size() > 0 && data.name.size() <= 200 &&
+               data.price is number && data.price >= 0 &&
+               data.category is string &&
+               data.image is string &&
+               data.description is string &&
+               data.keys().hasAll(['name', 'price', 'category', 'image', 'description']) &&
+               data.keys().size() <= 15;
+      }
+
+      allow read: if true;
+      allow create: if isAdmin() && isValidProduct(incoming()) && isValidId(productId);
+      allow update: if isAdmin() && isValidProduct(incoming()) && (
+        incoming().diff(existing()).affectedKeys().hasOnly(['name', 'price', 'category', 'image', 'description', 'isNew', 'sizes', 'colors', 'updatedAt'])
+      );
+      allow delete: if isAdmin();
+    }
+
+    // 2. Admins
+    match /admins/{adminId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    // 3. Orders
+    match /orders/{orderId} {
+      function isValidOrder(data) {
+        return data.userId == request.auth.uid &&
+               data.userEmail is string &&
+               data.items is list &&
+               data.total is number &&
+               data.status in ['pending', 'processing', 'shipped', 'delivered', 'cancelled'] &&
+               data.billingInfo.firstName is string &&
+               data.billingInfo.firstName.size() > 0 &&
+               data.billingInfo.address is string &&
+               data.billingInfo.address.size() > 0;
+      }
+
+      allow create: if isSignedIn() && isValidOrder(incoming()) && isValidId(orderId);
+      allow read: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow update, delete: if isAdmin();
+    }
+  }
+}
